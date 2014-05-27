@@ -1,0 +1,2 @@
+class ExceptionReportedToUser(Exception):
+	pass
