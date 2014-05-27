@@ -11,7 +11,10 @@ class InsufficientTransactionFees(Exception):
 class Host(object):
 	def __init__(self, useTestNet, dataDirectory, configFile=None):
 		if configFile is None:
-			configFile = path.join(path.expanduser("~"), '.litecoin', 'litecoin.conf')
+			if os.name == 'nt':
+				configFile = path.join(path.expanduser("~"), 'AppData', 'Roaming', 'Litecoin', 'litecoin.conf')
+			else:
+				configFile = path.join(path.expanduser("~"), '.litecoin', 'litecoin.conf')
 
 		with open(configFile, mode='rb') as f:
 			configFileBuffer = f.read()
