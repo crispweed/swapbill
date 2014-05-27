@@ -54,7 +54,8 @@ class Host(object):
 		self._hasExtendTransactionsInBlockQuery = True
 		try:
 			transactionsInBlockZero = self._rpcHost.call('getrawtransactionsinblock', blockHashForBlockZero)
-		except RPC.MethodNotFoundException:
+		#except RPC.MethodNotFoundException:
+		except RPC.RPCFailureException: # ** we get a different RPC error for this on Windows
 			self._hasExtendTransactionsInBlockQuery = False
 
 		self._submittedTransactionsFileName = path.join(dataDirectory, 'submittedTransactions.txt')
