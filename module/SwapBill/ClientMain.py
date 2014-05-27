@@ -25,6 +25,7 @@ except ImportError as e:
 	module = module.strip("'")
 	print("Please install the '" + module + "' module.")
 	print("e.g. (on linux, for this python version) 'sudo pip-{major}.{minor} install {module}'".format(major=sys.version_info.major, minor=sys.version_info.minor, module=module))
+	print("or 'easy_install " + module + "'")
 	exit()
 
 class BadAddressArgument(ExceptionReportedToUser):
