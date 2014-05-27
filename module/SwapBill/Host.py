@@ -1,4 +1,5 @@
 from __future__ import print_function
+import os
 from os import path
 from SwapBill import ParseConfig, RPC, RawTransaction, Address, TransactionFee, Amounts, Wallet
 from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
