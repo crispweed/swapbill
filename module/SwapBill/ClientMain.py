@@ -57,12 +57,12 @@ sp.add_argument('--blocksUntilExpiry', type=int, default=8, help='if the transac
 sp = subparsers.add_parser('post_ltc_buy', help='make an offer to buy litecoin with swapbill')
 sp.add_argument('--swapBillOffered', required=True, help='amount of swapbill offered')
 sp.add_argument('--exchangeRate', required=True, help='the exchange rate (positive integer, SWP/LTC * 0x100000000, must be less than 0x100000000)')
-sp.add_argument('--blocksUntilExpiry', type=int, default=200, help='after this block the offer expires (and swapbill remaining in any unmatched part of the offer is returned)')
+sp.add_argument('--blocksUntilExpiry', type=int, default=8, help='after this block the offer expires (and swapbill remaining in any unmatched part of the offer is returned)')
 
 sp = subparsers.add_parser('post_ltc_sell', help='make an offer to sell litecoin for swapbill')
 sp.add_argument('--swapBillDesired', required=True, help='amount of swapbill to buy (deposit of 1/16 of this amount will be paid in to the offer)')
 sp.add_argument('--exchangeRate', required=True, help='the exchange rate SWP/LTC (must be greater than 0 and less than 1)')
-sp.add_argument('--blocksUntilExpiry', type=int, default=200, help='after this block the offer expires (and swapbill remaining in any unmatched part of the offer is returned)')
+sp.add_argument('--blocksUntilExpiry', type=int, default=2, help='after this block the offer expires (and swapbill remaining in any unmatched part of the offer is returned)')
 
 sp = subparsers.add_parser('complete_ltc_sell', help='complete an ltc exchange by fulfilling a pending exchange payment')
 sp.add_argument('--pendingExchangeID', required=True, help='the id of the pending exchange payment to fulfill')

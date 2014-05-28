@@ -45,6 +45,22 @@ You can test the RPC server by making RPC queries from the command line, e.g.:
 
 (This RPC interface is very handy for interaction with the reference client generally, and for general troubleshooting.)
 
+# A note about the txindex option
+
+The txindex tells litecoind to include a full transaction index, which is required if you want to look up any arbitrary transaction in the blockchain history
+by transaction ID.
+
+Because of the way the SwapBill protocol works, with swapbill amounts associated directly with unspent outputs in the underlying blockchain,
+the SwapBill client just need to scan the transactions in each new block as it arrives,
+and *doesn't* need to look up arbitrary transactions from further back in the blockchain history.
+
+Unfortunately, the RPC interface to the litecoin reference client doesn't provide a way to query the transactions by block, and
+the txindex option is then required, essentially, as a workaround to implement this specific query functionality.
+
+It's possible, and quite straightforward, to patch the reference client source code to add an RPC method for querying the set of transactions in a given block,
+without the txindex option needing to be set. The SwapBill client actually tests for the existance of a custom 'getrawtransactionsinblock' RPC method,
+and uses this if available. With this custom query no arbitrary transaction queries is required, and the txindex option can be left unset.
+
 # Running the client
 
 There's no installation process for the client, currently, and instead this just runs directly
@@ -106,7 +122,13 @@ and only spend 'testnet litecoin' outputs, and any swapbill balances created wit
 As with the bitcoin testnet, litecoin testnet coins are designed to be without value, and the same then goes for testnet swapbill,
 so you can try things out at this stage without spending any real litecoin.
 
-From here on, wherever we talk about 'swapbill' or 'litecoin', for the current release this means 'testnet litecoin' and 'testnet swapbill'.
+From here on, wherever we talk about 'swapbill' or 'litecoin', (for the current release) this means 'testnet litecoin' and 'testnet swapbill'.
+
+## Protocol subject to change
+
+The purpose of this release is to solicit community feedback about a protocol in development.
+The protocol and client interface implemented for the current release, and as described in this document, are not final,
+and are subject to change.
 
 ## Wallet organisation
 
@@ -215,10 +237,9 @@ total : 10000000
 Note that it can sometimes take a while for new blocks to be mined on the litecoin testnet,
 depending on whether anyone is actually mining this blockchain (!), and it can then take a while for swapbill transactions to be confirmed.
 
-Burn transactions are necessary to create swapbill initially, and can also be used if there is no swapbill available,
-but in most cases (where there is swapbill available for exchange),
-you should actually prefer to obtain swapbill through the SwapBill trading mechanism,
-as you'll get a better exchange rate for your host currency this way.
+Burn transactions are necessary to create swapbill initially,
+but you'll get a better exchange rate for your host currency if you *exchange*
+host currency for swapbill (see below), and so exchanges for the host currency should be preferred over burns wherever possible.
 
 ## Aside: committed and in memory transactions
 
@@ -398,11 +419,6 @@ but you can't make a payment of:
 The swapbill protocol includes support for decentralised exchange between swapbill and the host currency, based on buy and sell
 offer information posted on the block chain and protocol rules for matching these buy and sell offers.
 
-Although more complicated than submitting a burn transaction,
-this is usually the best way to obtain swapbill (as long as there is swapbill available for exchange)
-because you will get more swapbill for the same amount of litecoin,
-and this exchange mechanism this should be preferred to swapbill creation through burn transactions.
-
 Three additional client actions (and associated transaction types) are provided for this exchange mechanism:
 * post_ltc_buy
 * post_ltc_sell
@@ -430,3 +446,334 @@ A couple of other details to note with regards to trading:
 * there is also a minimum litecoin equivalent constraint applied to trade offers - currently the litecoin equivalent for each trade offer type (calculate based on swapbill amount and exchange rate) must be at least 1000000 litecoin satoshis
 * trade offers may be partially matched, and litecoin sell offers can then potentially require more than completion transaction
 
+The trading mechanism provided by SwapBill is necessarily fairly complex, and a specification of the *exact* operation of this mechanism is beyond the scope of this document,
+but we'll show a concrete example of trading worked through in the client to show *how to use* the mechanism.
+
+## Trading example
+
+The client uses the term 'buy' to refer to buying litecoin with swapbill,
+and 'sell' to refer to selling litecoin for swapbill, and we'll use the same convention here.
+
+So a 'buyer' has some swapbill, and wants to exchange for litecoin:
+
+```
+~/git/swapbill $ python Client.py --dataDir buyer get_balance
+...
+Operation successful
+active : 100000000
+spendable : 100000000
+total : 100000000
+```
+
+To check the list of sell offers currently active on the block chain:
+
+```
+~/git/swapbill $ python Client.py --dataDir buyer get_sell_offers
+Loaded cached state data successfully
+...
+Operation successful
+exchange rate : 0.919999999925
+    swapbill desired : 13400000
+    deposit paid : 837500
+    mine : False
+    ltc equivalent : 12327999
+exchange rate : 0.899999999907
+    swapbill desired : 10000000
+    deposit paid : 625000
+    mine : False
+    ltc equivalent : 8999999
+exchange rate : 0.889999999898
+    swapbill desired : 1800000
+    deposit paid : 112500
+    mine : False
+    ltc equivalent : 1601999
+```
+
+Higher exchange rates are better for our buyer.
+
+Our buyer is ok with each swapbill being valued at 0.919 litecoin, and goes ahead and posts a buy offer.
+
+```
+ ~/git/swapbill $ python Client.py --dataDir buyer post_ltc_buy --swapBillOffered 10000000 --exchangeRate 0.919
+...
+In memory state updated to end of block 283672
+attempting to send LTCBuyOffer, change output address=mtTgHycMu7H4k7CTsk1mPLCRSYzLdPsRLi, ltcBuy output address=mtbXpS62QTuiZMicZ5H34eCW2BWfxVRdjN, exchangeRate=3947074945, maxBlock=283681, receivingAddress=mzA3C8icRRpWH8bpiFvzMiPGYKRyq2uRM1, sourceAccount=(u'e35e9a1dd74a825b4cec7ceb267cc746f22f8a2dee316f032d01f08eb7d92486', 1), swapBillOffered=10000000
+Operation successful
+transaction id : b0e88c6d9e7969f3ebbd7738dfd5cc42f245e03a5ab75dbfc5f20db6764ad74e
+```
+
+We check sell offers again immediately, and these are unchanged, with our buy offer still in the memory pool:
+
+```
+~/git/swapbill $ python Client.py --dataDir buyer get_sell_offers
+Loaded cached state data successfully
+...
+In memory state updated to end of block 283672
+in memory pool: LTCBuyOffer
+ - 100000000 swapbill output consumed
+Operation successful
+exchange rate : 0.919999999925
+    swapbill desired : 13400000
+    deposit paid : 837500
+    mine : False
+    ltc equivalent : 12327999
+exchange rate : 0.899999999907
+    swapbill desired : 10000000
+    deposit paid : 625000
+    mine : False
+    ltc equivalent : 8999999
+exchange rate : 0.889999999898
+    swapbill desired : 1800000
+    deposit paid : 112500
+    mine : False
+    ltc equivalent : 1601999
+```
+
+But in the next block, the transaction goes through:
+
+```
+thomas@Z77A-MINT15 ~/git/swapbill $ python Client.py --dataDir buyer get_sell_offers
+Loaded cached state data successfully
+State update starting from block 283653
+Committed state updated to start of block 283654
+in memory: Burn
+ - 100000000 swapbill output added
+in memory: LTCBuyOffer
+ - 100000000 swapbill output consumed
+ - 80000000 swapbill output added
+ - created buy offer, refund output seeded with 10000000 swapbill and locked until trade completed
+In memory state updated to end of block 283674
+Operation successful
+exchange rate : 0.919999999925
+    swapbill desired : 3400000
+    deposit paid : 212500
+    mine : False
+    ltc equivalent : 3127999
+exchange rate : 0.899999999907
+    swapbill desired : 10000000
+    deposit paid : 625000
+    mine : False
+    ltc equivalent : 8999999
+exchange rate : 0.889999999898
+    swapbill desired : 1800000
+    deposit paid : 112500
+    mine : False
+    ltc equivalent : 1601999
+```
+
+So we can see that no other buy offers were madein this time, and (as long as there are no subsequent blockchain reorganisations) our offer has been matched against
+the top sell offer, and the amount of the top sell offer reduced accordingly.
+
+Note the line in our transaction reports about a refund output being seeded and locked until trade complete.
+And we can see this, also, when we check our balance:
+
+```
+~/git/swapbill $ python Client.py --dataDir buyer get_balance
+...
+In memory state updated to end of block 283675
+Operation successful
+active : 80000000
+spendable : 80000000
+total : 90000000
+```
+
+This shows that 10000000 satoshis of our total balance is not 'spendable'.
+What's happened here is that an output has been created for the trade.
+This output will be credited with a refund of our swapbill in trading, plus the seller's deposit, if the trade is not completed by the seller.
+And the output is locked (in the SwapBill protocol) because the trade is still active, and can potentially pay more swapbill in to the output.
+
+If we check the current list of buy offers, our offer is not listed, because this has already been matched (it was matched immediately against an existing sell offer):
+
+```
+~/git/swapbill $ python Client.py --dataDir buyer get_buy_offers
+...
+In memory state updated to end of block 283677
+Operation successful
+No entries
+```
+
+There is now a 'pending exchange' generated by our trade offer, however, and we can see this with the get_pending_exchanges query:
+
+```
+~/git/swapbill $ python Client.py --dataDir buyer get_pending_exchanges
+...
+In memory state updated to end of block 283677
+Operation successful
+pending exchange index : 2
+    I am seller (and need to complete) : False
+    outstanding ltc payment amount : 9194999
+    swap bill paid by buyer : 10000000
+    expires on block : 283724
+    I am buyer (and waiting for payment) : True
+    deposit paid by seller : 625000
+```
+
+We just need to wait for the seller to complete the exchange, with the exchange completion including a payment of the outstanding litecoin amount listed.
+If the seller doesn't complete the exchange before block 283724 then the SwapBill protocol will refund us the amount of swapbill paid, plus the deposit of 625000.
+
+## Selling litecoin for swapbill
+
+The process for selling litecoin is similar, but with a second transaction required for exchange completion.
+
+So, a 'seller' has some litecoin, and wants to exchange for swapbill.
+
+The seller needs some swapbill to seed a receive output for the trade, and to pay a deposit.
+
+```
+~/git/swapbill $ python Client.py --dataDir seller get_balance
+...
+Operation successful
+active : 20000000
+spendable : 20000000
+total : 20000000
+```
+
+A receive output will be required for the trade, and a minimum balance of 10000000 will be required to seed that output,
+leaving 10000000 available for a trade deposit.
+
+The deposit is calculated as a fixed fraction of the swapbill amount being traded, with this fraction set by the SwapBill protocol, and currently fixed at 1/16.
+So this balance will enable us to exchange litecoin for a further 160000000 swapbill.
+
+To check the list of buy offers currently active on the block chain:
+
+```
+~/git/swapbill $ python Client.py --dataDir seller get_buy_offers
+...
+Operation successful
+exchange rate : 0.931999999797
+    ltc equivalent : 112771999
+    mine : False
+    swapbill offered : 121000000
+exchange rate : 0.949999999953
+    ltc equivalent : 80337699
+    mine : False
+    swapbill offered : 84566000
+```
+
+Lower exchange rates are better for the seller.
+
+The seller wants to value each swapbill at 0.925 litecoin (so below the lowest existing buy offers), and goes ahead and posts an offer.
+
+```
+~/git/swapbill $ python Client.py --dataDir seller post_ltc_sell --swapBillDesired 160000000 --exchangeRate 0.925 --blocksUntilExpiry 4
+...
+In memory state updated to end of block 283686
+attempting to send LTCSellOffer, change output address=mtaJf1mTHsjXW97aoNQmT5ALhW6EwBZHsT, ltcSell output address=mx4hbMPDUALfF4D7YdeAAw4rUFADdbjsSQ, exchangeRate=3972844748, maxBlock=283691, sourceAccount=(u'4473ef0aca2d3750ae19c525a7ca4db66dbd96f71af0caf6a460d94eb186899b', 1), swapBillDesired=160000000
+Operation successful
+transaction id : ff0cf83f1523074883f5e433f05326a60548a48a2f41919eb4989411e57f145c
+```
+
+Note that we've set an additional blocksUntilExpiry option here.
+This option defaults to a fairly low value, but it can be quite important to control this value when making litecoin sell transactions,
+since we'll need to make sure we watch for matches and submit the corresponding completion transactions.
+By making the offer expire within a small number of blocks we can limit the time during which we need to check for matches,
+although this also gives buyers less time to make matching offers.
+
+Our sell offer goes through in the next mined block, but is not matched, because it is lower than the existing buy offers, and now appears on the list of sell offers.
+
+```
+~/git/swapbill $ python Client.py --dataDir seller get_sell_offers
+...
+In memory state updated to end of block 283687
+Operation successful
+exchange rate : 0.924999999814
+    swapbill desired : 160000000
+    deposit paid : 10000000
+    mine : True
+    ltc equivalent : 147999999
+exchange rate : 0.919999999925
+    swapbill desired : 3400000
+    deposit paid : 212500
+    mine : False
+    ltc equivalent : 3127999
+...
+```
+
+The exchange rate value shown is slightly different to the exchange rate we specified in the offer because
+exchange rates are represented internally by the client (and in the SwapBill protocol) as integer values, and there was some rounding in the post_offer_action.
+
+In the next block, some one makes a buy offer that matches our offer, but with a smaller amount, and our offer is therefore *partially matched*.
+
+```
+~/git/swapbill $ python Client.py --dataDir seller get_sell_offers
+...
+In memory state updated to end of block 283689
+Operation successful
+exchange rate : 0.924999999814
+    swapbill desired : 147700000
+    deposit paid : 9231250
+    mine : True
+    ltc equivalent : 136622499
+exchange rate : 0.919999999925
+    swapbill desired : 3400000
+    deposit paid : 212500
+    mine : False
+    ltc equivalent : 3127999
+...
+```
+
+And we can see that a new pending exchange is now listed for our offer.
+
+```
+~/git/swapbill $ python Client.py --dataDir seller get_pending_exchanges
+...
+In memory state updated to end of block 283689
+Operation successful
+pending exchange index : 3
+    I am seller (and need to complete) : True
+    outstanding ltc payment amount : 11377499
+    swap bill paid by buyer : 12300000
+    expires on block : 283739
+    I am buyer (and waiting for payment) : False
+    deposit paid by seller : 768750
+```
+
+We now have a fixed number of blocks in which to complete the trade before this pending exchange expires.
+(The SwapBill protocol currently fixes this at 50 blocks from the block in which trade offers are matched.)
+
+To complete the exchange we use the complete_ltc_sell action.
+
+```
+~/git/swapbill $ python Client.py --dataDir seller complete_ltc_sell --pendingExchangeID 3
+...
+In memory state updated to end of block 283689
+attempting to send LTCExchangeCompletion, destinationAddress=mg7a3nRjWnAw9EP2f11g38uMk3JAENroXR, destinationAmount=11377499, pendingExchangeIndex=3
+Operation successful
+transaction id : abe86fd9a17b1b27f8f302b398995d20c2f6366590484f7feee2670db580a831
+```
+
+Once the completion transaction has gone through, we can see that we have been credited with swapbill for the partial exchange:
+
+```
+~/git/swapbill $ python Client.py --dataDir seller get_balance
+...
+In memory state updated to end of block 283690
+Operation successful
+active : 0
+spendable : 0
+total : 23068750
+```
+
+We need to watch for further matches, and complete as necessary, until the sell offer has expires.
+This happens a few blocks later, and we can then see the unmatched swapbill refunded to our balance.
+
+```
+ ~/git/swapbill $ python Client.py --dataDir seller get_balance
+Loaded cached state data successfully
+State update starting from block 283671
+Committed state updated to start of block 283671
+...
+in memory: LTCSellOffer
+ - 20000000 swapbill output consumed
+ - created sell offer, receiving output seeded with 10000000 swapbill and locked until trade completed
+in memory: LTCBuyOffer
+ - sell offer updated (receiving output contains 10000000 swapbill)
+in memory: LTCExchangeCompletion
+ - sell offer updated (receiving output contains 23068750 swapbill)
+trade offer or pending exchange expired
+In memory state updated to end of block 283691
+Operation successful
+active : 32300000
+spendable : 32300000
+total : 32300000
+```
