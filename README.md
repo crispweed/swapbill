@@ -4,16 +4,17 @@ The SwapBill client is written in Python and supports Python versions 2.7, 3.2, 
 
 The third party Python 'ecdsa' and 'requests' modules are required and must be installed.
 
-The client uses the litecoin reference client (litecoinQT or litecoind) as a backend, and so this reference client must also be installed.
+The client is currently set up to use the litecoin reference client (litecoinQT or litecoind) as a backend
+(and the litecoin blockchain as host blockchain), and so the litecoin reference client must also be installed.
 
 The client has been tested on Linux and Windows, but should work on any platform which supports the litecoin reference client and the
 required Python dependencies.
 
 # Setting up litecoinQT or litecoind as an RPC server
 
-You can get the reference client from <https://litecoin.org/>.
+You can get the litecoin reference client from <https://litecoin.org/>.
 
-The SwapBill client connects to the reference client with RPC calls, and so we need to ensure that this set up as an RPC server.
+The SwapBill client connects to the litecoin reference client with RPC calls, and so we need to ensure that this set up as an RPC server.
 
 The reference client should then also connect to the litecoin testnet (as opposed to mainnet), and maintain a full transaction index.
 
@@ -45,7 +46,7 @@ You can test the RPC server by making RPC queries from the command line, e.g.:
 
 (This RPC interface is very handy for interaction with the reference client generally, and for general troubleshooting.)
 
-# A note about the txindex option
+## A note about the txindex option
 
 The txindex tells litecoind to include a full transaction index, which is required if you want to look up any arbitrary transaction in the blockchain history
 by transaction ID.
@@ -112,8 +113,6 @@ spendable : 0
 total : 0
 ```
 
-# Basic operation
-
 ## Testnet
 
 For the current release the client is configured to work only with the litecoin testnet,
@@ -129,6 +128,8 @@ From here on, wherever we talk about 'swapbill' or 'litecoin', (for the current 
 The purpose of this release is to solicit community feedback about a protocol in development.
 The protocol and client interface implemented for the current release, and as described in this document, are not final,
 and are subject to change.
+
+# Basic operation
 
 ## Wallet organisation
 
