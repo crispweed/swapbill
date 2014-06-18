@@ -1,55 +1,20 @@
 from __future__ import print_function
 import os
 from os import path
-from SwapBill import ParseConfig, RPC, RawTransaction, Address, TransactionFee, Amounts, Wallet
+from SwapBill import RawTransaction, Address, Amounts, RPC
 from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
 
 class SigningFailed(ExceptionReportedToUser):
 	pass
-class InsufficientTransactionFees(Exception):
+class MaximumSignedSizeExceeded(Exception):
 	pass
 
 class Host(object):
-	def __init__(self, useTestNet, dataDirectory, configFile=None):
-		if configFile is None:
-			if os.name == 'nt':
-				configFile = path.join(path.expanduser("~"), 'AppData', 'Roaming', 'Litecoin', 'litecoin.conf')
-			else:
-				configFile = path.join(path.expanduser("~"), '.litecoin', 'litecoin.conf')
-
-		with open(configFile, mode='rb') as f:
-			configFileBuffer = f.read()
-		clientConfig = ParseConfig.Parse(configFileBuffer)
-
-		if useTestNet:
-			self._addressVersion = b'\x6f'
-		else:
-			self._addressVersion = b'\x30'
-
-		RPC_HOST = clientConfig.get('externalip', 'localhost')
-
-		try:
-			RPC_PORT = clientConfig['rpcport']
-		except KeyError:
-			if useTestNet:
-				RPC_PORT = 19332
-			else:
-				RPC_PORT = 9332
-
-		assert int(RPC_PORT) > 1 and int(RPC_PORT) < 65535
-
-		try:
-			RPC_USER = clientConfig['rpcuser']
-			RPC_PASSWORD = clientConfig['rpcpassword']
-		except KeyError:
-			print('Values for rpcuser and rpcpassword must both be set in your config file.')
-			exit()
-
-		self._rpcHost = RPC.Host('http://' + RPC_USER + ':' + RPC_PASSWORD + '@' + RPC_HOST + ':' + str(RPC_PORT))
+	def __init__(self, rpcHost, addressVersion, privateKeyAddressVersion, submittedTransactionsLogFileName):
+		self._rpcHost = rpcHost
+		self._addressVersion = addressVersion
+		self._privateKeyAddressVersion = privateKeyAddressVersion
 		self._cachedBlockHash = None
-		assert path.isdir(dataDirectory)
-		self._wallet = Wallet.Wallet(path.join(dataDirectory, 'wallet.txt'))
-
 		blockHashForBlockZero = self._rpcHost.call('getblockhash', 0)
 		self._hasExtendTransactionsInBlockQuery = True
 		try:
@@ -57,8 +22,7 @@ class Host(object):
 		#except RPC.MethodNotFoundException:
 		except RPC.RPCFailureException: # ** we get a different RPC error for this on Windows
 			self._hasExtendTransactionsInBlockQuery = False
-
-		self._submittedTransactionsFileName = path.join(dataDirectory, 'submittedTransactions.txt')
+		self._submittedTransactionsFileName = submittedTransactionsLogFileName
 
 # unspents, addresses, transaction encode and send
 
@@ -79,34 +43,25 @@ class Host(object):
 
 	def getNewNonSwapBillAddress(self):
 		return Address.ToPubKeyHash(self._addressVersion, self._rpcHost.call('getnewaddress'))
-	def getNewSwapBillAddress(self):
-		#return Address.ToPubKeyHash(self._addressVersion, self._rpcHost.call('getnewaddress', 'SwapBill'))
-		return self._wallet.addKeyPairAndReturnPubKeyHash()
 
-	def addressIsMine(self, pubKeyHash):
-		if self._wallet.hasKeyPairForPubKeyHash(pubKeyHash):
-			return True
-		address = Address.FromPubKeyHash(self._addressVersion, pubKeyHash)
-		validateResults = self._rpcHost.call('validateaddress', address)
-		result = validateResults['ismine']
-		assert result in (True, False)
-		return result
-
-	def privateKeyForPubKeyHash(self, pubKeyHash):
-		return self._wallet.privateKeyForPubKeyHash(pubKeyHash)
-
-	def signAndSend(self, unsignedTransactionHex, privateKeys):
+	def signAndSend(self, unsignedTransactionHex, privateKeys, maximumSignedSize):
+		#print('\t\tunsignedTransactionHex =', unsignedTransactionHex.__repr__())
+		#print('\t\tprivateKeys =', privateKeys.__repr__())
+		#print('\t\tmaximumSignedSize =', maximumSignedSize.__repr__())
+		#return None
 		## lowest level transaction send interface
 		signingResult = self._rpcHost.call('signrawtransaction', unsignedTransactionHex)
 		if signingResult['complete'] != True:
-			signingResult = self._rpcHost.call('signrawtransaction', signingResult['hex'], None, privateKeys)
+			privateKeys_WIF = []
+			for privateKey in privateKeys:
+				privateKeys_WIF.append(Address.PrivateKeyToWIF(privateKey, self._privateKeyAddressVersion))
+			signingResult = self._rpcHost.call('signrawtransaction', signingResult['hex'], None, privateKeys_WIF)
 		if signingResult['complete'] != True:
 			raise SigningFailed("RPC call to signrawtransaction did not set 'complete' to True")
 		signedHex = signingResult['hex']
-		# move out of lowest level send interface?
-		# (or repeat in higher level code?)
-		if not TransactionFee.TransactionFeeIsSufficient(self._rpcHost, signedHex):
-			raise InsufficientTransactionFees()
+		byteSize = len(signedHex) / 2
+		if byteSize > maximumSignedSize:
+			raise MaximumSignedSizeExceeded()
 		try:
 			txID = self._rpcHost.call('sendrawtransaction', signedHex)
 		except RPC.RPCFailureException as e:

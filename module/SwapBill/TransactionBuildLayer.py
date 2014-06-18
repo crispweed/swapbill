@@ -25,32 +25,23 @@ class TransactionBuildLayer(object):
 			asInputs.append((output['txid'], output['vout']))
 		return amounts, asInputs
 
-	def getActiveAccount(self, state):
-		best = None
-		bestAmount = 0
-		for account in self._ownedAccounts.spendableAccounts:
-			assert state.getSpendableAmount(account) > 0
-			amount = state._balances[account]
-			if amount > bestAmount:
-				best = account
-				bestAmount = amount
-		if bestAmount == 0:
-			raise ExceptionReportedToUser('No active swapbill balance currently available (you may need to wait for a transaction in progress to complete).')
-		self._scriptPubKeyLookup[best] = self._ownedAccounts.spendableAccounts[best][2]
-		self._privateKeys.append(self._ownedAccounts.spendableAccounts[best][1])
-		return best
-
-	def getAllOwnedAndSpendable(self, state):
+	def getSwapBillUnspent(self, state):
 		result = []
-		for account in self._ownedAccounts.spendableAccounts:
-			assert state.getSpendableAmount(account) > 0
-			self._scriptPubKeyLookup[account] = self._ownedAccounts.spendableAccounts[account][2]
-			self._privateKeys.append(self._ownedAccounts.spendableAccounts[account][1])
-			result.append(account)
+		for account in self._ownedAccounts.accounts:
+			if state._balances.balanceFor(account) > 0:
+				result.append(account)
+		result.sort()
 		return result
 
-	def sendTransaction(self, tx):
+	def swapBillUnspentUsed(self, account):
+		self._scriptPubKeyLookup[account] = self._ownedAccounts.accounts[account][2]
+		self._privateKeys.append(self._ownedAccounts.accounts[account][1])
+
+	def checkIfThereIsAtLeastOneOutstandingTradeRef(self, state):
+		return bool(self._ownedAccounts.tradeOfferChangeCounts)
+
+	def sendTransaction(self, tx, maximumSignedSize):
 		# higher level transaction send interface
 		unsignedData = RawTransaction.Create(tx, self._scriptPubKeyLookup)
 		unsignedHex = RawTransaction.ToHex(unsignedData)
-		return self._host.signAndSend(unsignedHex, self._privateKeys)
+		return self._host.signAndSend(unsignedHex, self._privateKeys, maximumSignedSize)

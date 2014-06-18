@@ -2,6 +2,8 @@ from SwapBill import Base58Check
 
 class BadAddress(Exception):
 	pass
+class BadPrivateKeyWIF(Exception):
+	pass
 
 def FromPubKeyHash(addressVersion, data):
 	assert type(addressVersion) is type(b'.')
@@ -22,3 +24,15 @@ def ToPubKeyHash(addressVersion, address):
 	if data[:1] != addressVersion:
 		raise BadAddress('incorrect version byte:', data[:1], 'expected:', addressVersion)
 	return data[1:]
+
+def PrivateKeyFromWIF(addressVersion, wif):
+	data = Base58Check.Decode(wif)
+	if data[:1] != addressVersion:
+		raise BadPrivateKeyWIF('incorrect version byte:', data[:1], 'expected:', addressVersion)
+	return data[1:]
+def PrivateKeyToWIF(data, addressVersion):
+	assert type(addressVersion) is type(b'.')
+	assert type(data) is type(b'.')
+	assert len(addressVersion) == 1
+	assert len(data) == 32
+	return Base58Check.Encode(addressVersion + data)

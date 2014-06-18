@@ -6,7 +6,6 @@ class InMemoryTransaction(object):
 	def addInput(self, txID, vOut):
 		self._inputs.append((txID, vOut))
 	def addOutput(self, pubKeyHash, amount):
-		assert type(amount) is int
 		assert amount >= 0
 		self._outputs.append((pubKeyHash, amount))
 	# helper

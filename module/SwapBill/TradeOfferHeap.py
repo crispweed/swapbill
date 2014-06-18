@@ -11,16 +11,17 @@ class Heap(object):
 	def _hasExpired(self, expiry):
 		return self._blockCount > expiry
 	def _hasExpiredOffers(self):
-		for offer in self._offerByExchangeRate:
-			if self._hasExpired(offer[2]):
+		for entry in self._offerByExchangeRate:
+			offer = entry[2]
+			if self._hasExpired(offer.expiry):
 				return True
 		return False
 
-	#details = address, amount, extraData=None
-	def addOffer(self, exchangeRate, expiry, details):
+	def addOffer(self, offer):
+		rateForOrdering = offer.rate
 		if self._higherExchangeRateIsBetterOffer:
-			exchangeRate = -exchangeRate
-		entry = (exchangeRate, self._entryCount, expiry, details)
+			rateForOrdering = -rateForOrdering
+		entry = (rateForOrdering, self._entryCount, offer)
 		self._entryCount += 1
 		heapq.heappush(self._offerByExchangeRate, entry)
 
@@ -31,11 +32,12 @@ class Heap(object):
 			return []
 		expired = []
 		unexpired = []
-		for offer in self._offerByExchangeRate:
-			if self._hasExpired(offer[2]):
-				expired.append(offer[3])
+		for entry in self._offerByExchangeRate:
+			offer = entry[2]
+			if self._hasExpired(offer.expiry):
+				expired.append(offer)
 			else:
-				unexpired.append(offer)
+				unexpired.append(entry)
 		heapq.heapify(unexpired)
 		self._offerByExchangeRate = unexpired
 		return expired
@@ -49,28 +51,22 @@ class Heap(object):
 
 	def currentBestExchangeRate(self):
 		assert not self.empty()
-		if self._higherExchangeRateIsBetterOffer:
-			return -self._offerByExchangeRate[0][0]
-		return self._offerByExchangeRate[0][0]
+		return self._offerByExchangeRate[0][2].rate
 	def currentBestExpiry(self):
 		assert not self.empty()
-		return self._offerByExchangeRate[0][2]
+		return self._offerByExchangeRate[0][2].expiry
 
 	def peekCurrentBest(self):
 		assert not self.empty()
-		exchangeRate, entryCount, expiry, details = self._offerByExchangeRate[0]
-		return details
+		return self._offerByExchangeRate[0][2]
 	def popCurrentBest(self):
 		assert not self.empty()
 		entry = heapq.heappop(self._offerByExchangeRate)
-		exchangeRate, entryCount, expiry, details = entry
-		return details
+		return entry[2]
 
-	def getSortedExchangeRateAndDetails(self):
+	def getSortedOffers(self):
 		result = []
 		for entry in sorted(self._offerByExchangeRate):
-			exchangeRate, entryCount, expiry, details = entry
-			if self._higherExchangeRateIsBetterOffer:
-				exchangeRate = -exchangeRate
-			result.append((exchangeRate, details))
+			offer = entry[2]
+			result.append(offer)
 		return result

@@ -8,47 +8,50 @@ from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
 stateVersion = 0.8
 ownedAccountsVersion = 0.2
 
-def _processTransactions(host, state, ownedAccounts, transactions, applyToState, reportPrefix, out):
+def _processTransactions(state, wallet, ownedAccounts, transactions, applyToState, reportPrefix, out):
 	for txID, hostTXHex in transactions:
 		hostTXBytes = RawTransaction.FromHex(hostTXHex)
 		hostTX, scriptPubKeys = RawTransaction.Decode(hostTXBytes)
 		if RawTransaction.UnexpectedFormat_Fast(hostTXBytes, ControlAddressPrefix.prefix):
 			continue
-		report = ownedAccounts.updateForSpent(hostTX, state)
+		inputsReport = ownedAccounts.updateForSpent(hostTX, state)
 		try:
-			transactionType, outputs, transactionDetails = TransactionEncoding.ToStateTransaction(hostTX)
+			transactionType, sourceAccounts, outputs, transactionDetails = TransactionEncoding.ToStateTransaction(hostTX)
 			appliedSuccessfully = True
 		except (TransactionEncoding.NotValidSwapBillTransaction, TransactionEncoding.UnsupportedTransaction):
-			appliedSuccessfully = False
-			transactionType = 'InvalidTransaction'
-		if appliedSuccessfully and not state.checkTransaction(transactionType, outputs, transactionDetails)[0]:
-			appliedSuccessfully = False
-		if not appliedSuccessfully:
-			if report != '':
-				print(reportPrefix + ': ' + transactionType + ' failed to decode or apply', file=out)
-				print(report, end="", file=out)
+			if inputsReport != '':
+				print(reportPrefix + ': <invalid transaction>', file=out)
+				print(inputsReport, end="", file=out)
 			continue
-		if applyToState:
-			inBetweenReport = ownedAccounts.checkForTradeOfferChanges(state)
-			assert inBetweenReport == ''
-			state.applyTransaction(transactionType, txID, outputs, transactionDetails)
-			report += ownedAccounts.checkForTradeOfferChanges(state)
-			report += ownedAccounts.updateForNewOutputs(host, state, txID, hostTX, outputs, scriptPubKeys)
-		if report != '':
+		if inputsReport != '':
 			print(reportPrefix + ': ' + transactionType, file=out)
-			print(report, end="", file=out)
+			print(inputsReport, end="", file=out)
+		if not applyToState:
+			continue
+		#inBetweenReport = ownedAccounts.checkForTradeOfferChanges(state)
+		#assert inBetweenReport == ''
+		error = state.applyTransaction(transactionType, txID, sourceAccounts=sourceAccounts, transactionDetails=transactionDetails, outputs=outputs)
+		outputsReport = ownedAccounts.checkForTradeOfferChanges(state)
+		outputsReport += ownedAccounts.updateForNewOutputs(wallet, state, txID, hostTX, outputs, scriptPubKeys)
+		if outputsReport:
+			if inputsReport == '':
+				# didn't print this line yet
+				print(reportPrefix + ': ' + transactionType, file=out)
+			print(outputsReport, end="", file=out)
+		if (outputsReport or inputsReport) and error is not None:
+			print(' * failed:', error, file=out)
 
-def _processBlock(host, state, ownedAccounts, blockHash, reportPrefix, out):
+def _processBlock(host, state, wallet, ownedAccounts, blockHash, reportPrefix, out):
 	transactions = host.getBlockTransactions(blockHash)
-	_processTransactions(host, state, ownedAccounts, transactions, True, reportPrefix, out)
-	inBetweenReport = ownedAccounts.checkForTradeOfferChanges(state)
-	assert inBetweenReport == ''
+	_processTransactions(state, wallet, ownedAccounts, transactions, True, reportPrefix, out)
+	#inBetweenReport = ownedAccounts.checkForTradeOfferChanges(state)
+	#assert inBetweenReport == ''
 	state.advanceToNextBlock()
 	tradeOffersChanged = ownedAccounts.checkForTradeOfferChanges(state)
 	if tradeOffersChanged:
 		print('trade offer or pending exchange expired', file=out)
 
-def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, startBlockIndex, startBlockHash, host, includePending, forceRescan, out):
+def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, startBlockIndex, startBlockHash, wallet, host, includePending, forceRescan, out):
 	loaded = False
 	if not forceRescan:
 		try:
@@ -86,7 +89,7 @@ def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, startBlockIndex, startBlo
 		## hard coded value used here for number of blocks to lag behind with persistent state
 		if len(toProcess) == 20:
 			## advance cached state
-			_processBlock(host, state, ownedAccounts, blockHash, 'committed', out=out)
+			_processBlock(host, state, wallet, ownedAccounts, blockHash, 'committed', out=out)
 			popped = toProcess.popleft()
 			blockIndex += 1
 			blockHash = popped
@@ -100,11 +103,11 @@ def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, startBlockIndex, startBlo
 
 	while len(toProcess) > 0:
 		## advance in memory state
-		_processBlock(host, state, ownedAccounts, blockHash, 'in memory', out=out)
+		_processBlock(host, state, wallet, ownedAccounts, blockHash, 'in memory', out=out)
 		popped = toProcess.popleft()
 		blockIndex += 1
 		blockHash = popped
-	_processBlock(host, state, ownedAccounts, blockHash, 'in memory', out=out)
+	_processBlock(host, state, wallet, ownedAccounts, blockHash, 'in memory', out=out)
 	blockIndex += 1
 
 	assert state._currentBlockIndex == blockIndex
@@ -118,7 +121,7 @@ def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, startBlockIndex, startBlo
 	# but we can potentially be more careful about this by checking best block chain after getting memory pool transactions
 	# and restarting the block chain traversal if this does not match up
 	memPoolTransactions = host.getMemPoolTransactions()
-	_processTransactions(host, state, ownedAccounts, memPoolTransactions, includePending, 'in memory pool', out)
+	_processTransactions(state, wallet, ownedAccounts, memPoolTransactions, includePending, 'in memory pool', out)
 
 	return state, ownedAccounts
 
