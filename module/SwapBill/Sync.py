@@ -9,8 +9,7 @@ stateVersion = 0.8
 ownedAccountsVersion = 0.2
 
 def _processTransactions(state, wallet, ownedAccounts, transactions, applyToState, reportPrefix, out):
-	for txID, hostTXHex in transactions:
-		hostTXBytes = RawTransaction.FromHex(hostTXHex)
+	for txID, hostTXBytes in transactions:
 		hostTX, scriptPubKeys = RawTransaction.Decode(hostTXBytes)
 		if RawTransaction.UnexpectedFormat_Fast(hostTXBytes, ControlAddressPrefix.prefix):
 			continue

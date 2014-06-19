@@ -24,8 +24,7 @@ or litecoinQT set up as an RPC server, and 'the client' to refer to the SwapBill
 
 You can download installers for litecoind from <https://litecoin.org/>, or this can also be built from source (from <https://github.com/litecoin-project/litecoin>).
 
-For the current preview version of the client, you'll need to tell litecoind to connect to the litecoin testnet (as opposed to mainnet),
-and maintain a full transaction index.
+For the current preview version of the client, you'll need to tell litecoind to connect to the litecoin testnet.
 
 The default location for the litecoind configuration file is `~/.litecoin/litecoin.conf` on Linux,
 and something like `C:\Users\YourUserName\AppData\Roaming\LiteCoin\litecoin.conf` on Windows.
@@ -34,18 +33,13 @@ Create a litecoin.conf file in this default location (if not already present), a
 
     server=1
     testnet=1
-    txindex=1
     rpcuser=litecoinrpc
     rpcpassword=somesecretpassword
 
-(Change the password!)
+(Note that starting from preview version 0.3 a full transaction index, and therefore the txindex option, is no longer required. Change the password!)
 
 To start the server you can then either launch litecoinQT (the graphical client) normally, or run litecoind from the command line.
 If running litecoind, the -printtoconsole option can be used to get console output about what the server is doing.
-
-If you already ran the reference client previously, against testnet and *without the txindex option* a reindexing operation will be required,
-and you should get a message about this.
-If running litecoinQT you should be able to just click OK to go ahead, or you can also call litecoind with the -reindex option to do this explicitly.
 
 You can test the RPC server by making RPC queries from the command line, e.g.:
 
@@ -53,22 +47,6 @@ You can test the RPC server by making RPC queries from the command line, e.g.:
     11914.15504872
 
 (This RPC interface is very handy for interaction with the reference client generally, and for general troubleshooting.)
-
-## A note about the txindex option
-
-The txindex tells litecoind to include a full transaction index, which is required if you want to look up any arbitrary transaction in the blockchain history
-by transaction ID.
-
-Because of the way the SwapBill protocol works, with swapbill amounts associated directly with unspent outputs in the underlying blockchain,
-the SwapBill client actually just needs to scan the transactions in each new block as it arrives,
-and *doesn't* need to look up arbitrary transactions from further back in the blockchain history.
-
-Unfortunately, the RPC interface to the litecoin reference client doesn't provide a way to query the transactions by block, and
-the txindex option is then required, essentially, as a workaround to implement this specific query functionality.
-
-It's possible, and quite straightforward, to patch the reference client source code to add an RPC method for querying the set of transactions in a given block,
-without the txindex option needing to be set. The SwapBill client actually tests for the existance of a custom 'getrawtransactionsinblock' RPC method,
-and uses this if available. (With this custom query no arbitrary transaction queries is required, and the txindex option can be left unset.)
 
 # Running the client
 

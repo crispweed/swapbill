@@ -15,13 +15,14 @@ class Host(object):
 		self._addressVersion = addressVersion
 		self._privateKeyAddressVersion = privateKeyAddressVersion
 		self._cachedBlockHash = None
-		blockHashForBlockZero = self._rpcHost.call('getblockhash', 0)
-		self._hasExtendTransactionsInBlockQuery = True
-		try:
-			transactionsInBlockZero = self._rpcHost.call('getrawtransactionsinblock', blockHashForBlockZero)
-		#except RPC.MethodNotFoundException:
-		except RPC.RPCFailureException: # ** we get a different RPC error for this on Windows
-			self._hasExtendTransactionsInBlockQuery = False
+		self._cachedBlockDataHash = None
+		#blockHashForBlockZero = self._rpcHost.call('getblockhash', 0)
+		#self._hasExtendTransactionsInBlockQuery = True
+		#try:
+			#transactionsInBlockZero = self._rpcHost.call('getrawtransactionsinblock', blockHashForBlockZero)
+		##except RPC.MethodNotFoundException:
+		#except RPC.RPCFailureException: # ** we get a different RPC error for this on Windows
+			#self._hasExtendTransactionsInBlockQuery = False
 		self._submittedTransactionsFileName = submittedTransactionsLogFileName
 
 # unspents, addresses, transaction encode and send
@@ -84,29 +85,31 @@ class Host(object):
 		except RPC.RPCFailureException:
 			pass
 		raise ExceptionReportedToUser('Unexpected RPC error in call to getblockhash.')
+
 	def _getBlock_Cached(self, blockHash):
 		if self._cachedBlockHash != blockHash:
 			self._cachedBlock = self._rpcHost.call('getblock', blockHash)
 			self._cachedBlockHash = blockHash
 		return self._cachedBlock
+	def _getBlockData_Cached(self, blockHash):
+		if self._cachedBlockDataHash != blockHash:
+			self._cachedBlockData = RawTransaction.FromHex(self._rpcHost.call('getblock', blockHash, False))
+			self._cachedBlockDataHash = blockHash
+		return self._cachedBlockData
 
 	def getNextBlockHash(self, blockHash):
 		block = self._getBlock_Cached(blockHash)
 		return block.get('nextblockhash', None)
 	def getBlockTransactions(self, blockHash):
 		result = []
-		if self._hasExtendTransactionsInBlockQuery:
-			transactions = self._rpcHost.call('getrawtransactionsinblock', blockHash)
-			assert len(transactions) >= 1
-			for entry in transactions[1:]:
-				result.append((entry['txid'], entry['hex']))
-		else:
-			block = self._getBlock_Cached(blockHash)
-			transactions = block['tx']
-			assert len(transactions) >= 1
-			for txHash in transactions[1:]:
-				txHex = self._rpcHost.call('getrawtransaction', txHash)
-				result.append((txHash, txHex))
+		block = self._getBlock_Cached(blockHash)
+		transactionIDs = block['tx']
+		blockData = self._getBlockData_Cached(blockHash)
+		rawTransactions = RawTransaction.GetTransactionsInBlock(blockData)
+		assert len(rawTransactions) == len(transactionIDs)
+		assert len(transactionIDs) >= 1
+		for i in range(len(rawTransactions) - 1):
+			result.append((transactionIDs[i + 1], rawTransactions[i + 1]))
 		return result
 
 	def getMemPoolTransactions(self):
@@ -114,7 +117,7 @@ class Host(object):
 		result = []
 		for txHash in mempool:
 			txHex = self._rpcHost.call('getrawtransaction', txHash)
-			result.append((txHash, txHex))
+			result.append((txHash, RawTransaction.FromHex(txHex)))
 		return result
 
 # convenience

@@ -32,6 +32,8 @@ def _encodeVarInt(i):
 
 def _decodeVarInt(data, startPos):
 	assert type(data) == type(b'')
+	if startPos >= len(data):
+		raise _RanOutOfData()
 	firstByte = data[startPos:startPos + 1]
 	if firstByte == b'\xff':
 		if startPos + 9 > len(data):
@@ -191,6 +193,35 @@ def Decode(txBytes):
 		assert len(pubKeyHash) == 20
 		result.addOutput(pubKeyHash, outputAmount)
 	return result, scriptPubKeys
+
+def GetTransactionsInBlock(data):
+	assert type(data) is type(b'')
+	try:
+		pos = 80 # skip block header
+		pos, numberOfTransactions = _decodeVarInt(data, pos)
+		result = []
+		for i in range(numberOfTransactions):
+			startPos = pos
+			pos += 4 # skip version
+			pos, numberOfInputs = _decodeVarInt(data, pos)
+			for i in range(numberOfInputs):
+				pos += 32 # txid
+				pos += 4 # vout
+				pos, scriptLen = _decodeVarInt(data, pos)
+				pos += scriptLen
+				pos += 4 # sequence
+			pos, numberOfOutputs = _decodeVarInt(data, pos)
+			for i in range(numberOfOutputs):
+				pos += 8 # output amount
+				pos, scriptLen = _decodeVarInt(data, pos)
+				pos += scriptLen
+			pos += 4 # lock time
+			result.append(data[startPos:pos])
+		if pos != len(data):
+			raise Exception('bad block data')
+		return result
+	except _RanOutOfData:
+		raise Exception('bad block data')
 
 def FromHex(hexStr):
 	return binascii.unhexlify(hexStr.encode('ascii'))
