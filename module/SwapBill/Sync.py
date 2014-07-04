@@ -10,9 +10,9 @@ ownedAccountsVersion = 0.2
 
 def _processTransactions(state, wallet, ownedAccounts, transactions, applyToState, reportPrefix, out):
 	for txID, hostTXBytes in transactions:
-		hostTX, scriptPubKeys = RawTransaction.Decode(hostTXBytes)
 		if RawTransaction.UnexpectedFormat_Fast(hostTXBytes, ControlAddressPrefix.prefix):
 			continue
+		hostTX, scriptPubKeys = RawTransaction.Decode(hostTXBytes)
 		inputsReport = ownedAccounts.updateForSpent(hostTX, state)
 		try:
 			transactionType, sourceAccounts, outputs, transactionDetails = TransactionEncoding.ToStateTransaction(hostTX)
