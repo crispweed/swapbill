@@ -27,3 +27,11 @@ Worked examples:
     example/buy
     example/unbackedsell
     example/crosschainexchange
+
+Other information:
+
+.. toctree::
+    :maxdepth: 1
+
+    resources
+
