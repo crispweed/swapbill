@@ -1,6 +1,5 @@
 from __future__ import print_function, division
 from SwapBill import Amounts
-from SwapBill.HardCodedProtocolConstraints import Constraints
 
 class OfferIsBelowMinimumExchange(Exception):
 	pass
@@ -30,25 +29,28 @@ def swapBillToLTC_RoundedUp(rate, swapBill):
 	if rounded:
 		ltc += 1
 	return ltc
+def swapBillToLTC_RoundedDown(rate, swapBill):
+	ltc, rounded = _swapBillToLTC(rate, swapBill)
+	return ltc
 
-def MinimumBuyOfferWithRate(rate):
-	swapBillForMinLTC = ltcToSwapBill_RoundedUp(rate, Constraints.minimumExchangeLTC)
-	return max(swapBillForMinLTC, Constraints.minimumSwapBillBalance)
+def MinimumBuyOfferWithRate(protocolParams, rate):
+	swapBillForMinLTC = ltcToSwapBill_RoundedUp(rate, protocolParams['minimumHostExchangeAmount'])
+	return max(swapBillForMinLTC, protocolParams['minimumSwapBillBalance'])
 
-def MinimumSellOfferWithRate(rate):
-	ltcForMinSwapBill = swapBillToLTC_RoundedUp(rate, Constraints.minimumSwapBillBalance)
-	return max(ltcForMinSwapBill, Constraints.minimumExchangeLTC)
+def MinimumSellOfferWithRate(protocolParams, rate):
+	ltcForMinSwapBill = swapBillToLTC_RoundedUp(rate, protocolParams['minimumSwapBillBalance'])
+	return max(ltcForMinSwapBill, protocolParams['minimumHostExchangeAmount'])
 
-def DepositRequiredForLTCSell(rate, ltcOffered):
-	swapBill = ltcToSwapBill_RoundedUp(rate, ltcOffered)
-	deposit = swapBill // Constraints.depositDivisor
-	if deposit * Constraints.depositDivisor != swapBill:
+def DepositRequiredForLTCSell(protocolParams, rate, hostCoinOffered):
+	swapBill = ltcToSwapBill_RoundedUp(rate, hostCoinOffered)
+	deposit = swapBill // protocolParams['depositDivisor']
+	if deposit * protocolParams['depositDivisor'] != swapBill:
 		deposit += 1
 	return deposit
 
 class BuyOffer(object):
-	def __init__(self, swapBillOffered, rate):
-		if swapBillOffered < MinimumBuyOfferWithRate(rate):
+	def __init__(self, protocolParams, swapBillOffered, rate):
+		if swapBillOffered < MinimumBuyOfferWithRate(protocolParams, rate):
 			raise OfferIsBelowMinimumExchange()
 		self._swapBillOffered = swapBillOffered
 		self.rate = rate
@@ -56,30 +58,31 @@ class BuyOffer(object):
 		return self._swapBillOffered == 0
 	def ltcEquivalent(self):
 		return swapBillToLTC_RoundedUp(self.rate, self._swapBillOffered)
-	def _canSubtract(self, swapBill):
+	def _canSubtract(self, protocolParams, swapBill):
 		if swapBill > self._swapBillOffered:
 			return False
 		if swapBill == self._swapBillOffered:
 			return True
-		return self._swapBillOffered - swapBill >= MinimumBuyOfferWithRate(self.rate)
+		return self._swapBillOffered - swapBill >= MinimumBuyOfferWithRate(protocolParams, self.rate)
 
 class SellOffer(object):
-	def __init__(self, swapBillDeposit, ltcOffered, rate):
-		if ltcOffered < MinimumSellOfferWithRate(rate):
+	def __init__(self, protocolParams, swapBillDeposit, hostCoinOffered, rate):
+		if hostCoinOffered < MinimumSellOfferWithRate(protocolParams, rate):
+			#print(MinimumSellOfferWithRate(minimumHostExchangeAmount, rate))
 			raise OfferIsBelowMinimumExchange()
 		self._swapBillDeposit = swapBillDeposit
-		self._ltcOffered = ltcOffered
+		self._hostCoinOffered = hostCoinOffered
 		self.rate = rate
 	def hasBeenConsumed(self):
-		return self._ltcOffered == 0
+		return self._hostCoinOffered == 0
 	def swapBillEquivalent(self):
-		return ltcToSwapBill_RoundedUp(self.rate, self._ltcOffered)
-	def _canSubtract(self, ltc):
-		if ltc > self._ltcOffered:
+		return ltcToSwapBill_RoundedUp(self.rate, self._hostCoinOffered)
+	def _canSubtract(self, protocolParams, ltc):
+		if ltc > self._hostCoinOffered:
 			return False
-		if ltc == self._ltcOffered:
+		if ltc == self._hostCoinOffered:
 			return True
-		return self._ltcOffered - ltc >= MinimumSellOfferWithRate(self.rate)
+		return self._hostCoinOffered - ltc >= MinimumSellOfferWithRate(protocolParams, self.rate)
 
 class Exchange(object):
 	pass
@@ -87,52 +90,45 @@ class Exchange(object):
 def OffersMeetOrOverlap(buy, sell):
 	return buy.rate <= sell.rate
 
-def _canMatchWith(buy, sell, swapBill, ltc):
-	if ltc < Constraints.minimumExchangeLTC:
-		return False
-	if swapBill < Constraints.minimumSwapBillBalance:
-		return False
-	return buy._canSubtract(ltc) and sell._canSubtract(swapBill)
-
-def MatchOffers(buy, sell):
+def MatchOffers(protocolParams, buy, sell):
 	assert OffersMeetOrOverlap(buy, sell)
 	appliedRate = (buy.rate + sell.rate) // 2
 
 	ltc, rounded = _swapBillToLTC(appliedRate, buy._swapBillOffered)
-	assert ltc >= Constraints.minimumExchangeLTC # should be guaranteed by buy and sell both satisfying this minimum requirement
+	assert ltc >= protocolParams['minimumHostExchangeAmount'] # should be guaranteed by buy and sell both satisfying this minimum requirement
 
 	candidates = [(buy._swapBillOffered, ltc)]
 	if rounded:
 		# added ensure that posting matching offers based on the displayed other currency equivalent results in a match
 		candidates.append((buy._swapBillOffered, ltc + 1))
 
-	swapBill, rounded = _ltcToSwapBill(appliedRate, sell._ltcOffered)
-	candidates.append((swapBill, sell._ltcOffered))
+	swapBill, rounded = _ltcToSwapBill(appliedRate, sell._hostCoinOffered)
+	candidates.append((swapBill, sell._hostCoinOffered))
 
-	ltc = sell._ltcOffered - MinimumSellOfferWithRate(sell.rate)
+	ltc = sell._hostCoinOffered - MinimumSellOfferWithRate(protocolParams, sell.rate)
 	if ltc > 0:
 		swapBill, rounded = _ltcToSwapBill(appliedRate, ltc)
 		candidates.append((swapBill, ltc))
 
-	swapBill = buy._swapBillOffered - MinimumBuyOfferWithRate(buy.rate)
+	swapBill = buy._swapBillOffered - MinimumBuyOfferWithRate(protocolParams, buy.rate)
 	if swapBill > 0:
 		ltc, rounded = _swapBillToLTC(appliedRate, swapBill)
 		candidates.append((swapBill, ltc))
 
 	for swapBill, ltc in candidates:
-		if swapBill < Constraints.minimumSwapBillBalance:
+		if swapBill < protocolParams['minimumSwapBillBalance']:
 			continue
-		if ltc < Constraints.minimumExchangeLTC:
+		if ltc < protocolParams['minimumHostExchangeAmount']:
 			continue
-		if buy._canSubtract(swapBill) and sell._canSubtract(ltc):
+		if buy._canSubtract(protocolParams, swapBill) and sell._canSubtract(protocolParams, ltc):
 			exchange = Exchange()
 			exchange.swapBillAmount = swapBill
 			exchange.ltc = ltc
-			exchange.swapBillDeposit = sell._swapBillDeposit * ltc // sell._ltcOffered
+			exchange.swapBillDeposit = sell._swapBillDeposit * ltc // sell._hostCoinOffered
 			buy._swapBillOffered -= swapBill
-			sell._ltcOffered -= ltc
+			sell._hostCoinOffered -= ltc
 			sell._swapBillDeposit -= exchange.swapBillDeposit
-			assert (sell._ltcOffered == 0) == (sell._swapBillDeposit == 0)
+			assert (sell._hostCoinOffered == 0) == (sell._swapBillDeposit == 0)
 			return exchange
 
 	raise OfferIsBelowMinimumExchange()

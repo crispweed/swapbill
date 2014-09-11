@@ -1,4 +1,4 @@
-from SwapBill import RawTransaction
+from SwapBill import RawTransaction, Util
 from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
 
 class TransactionBuildLayer(object):
@@ -43,5 +43,5 @@ class TransactionBuildLayer(object):
 	def sendTransaction(self, tx, maximumSignedSize):
 		# higher level transaction send interface
 		unsignedData = RawTransaction.Create(tx, self._scriptPubKeyLookup)
-		unsignedHex = RawTransaction.ToHex(unsignedData)
+		unsignedHex = Util.toHex(unsignedData)
 		return self._host.signAndSend(unsignedHex, self._privateKeys, maximumSignedSize)

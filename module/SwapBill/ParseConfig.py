@@ -1,4 +1,5 @@
 import io
+from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
 
 def Parse(fileBuffer):
 	## fileBuffer should contain the binary contents of the config file
@@ -11,10 +12,11 @@ def Parse(fileBuffer):
 	for line in f:
 		assert type(line) is type(b''.decode())
 		stripped = line.strip()
-		if stripped.startswith('#'):
+		if stripped.startswith('#') or not stripped:
 			continue
 		parts = stripped.split('=')
-		assert len(parts) == 2
+		if len(parts) != 2:
+			raise ExceptionReportedToUser('Unexpected line format in config file')
 		parts[0] = parts[0].strip()
 		parts[1] = parts[1].strip()
 		result[parts[0]] = parts[1]

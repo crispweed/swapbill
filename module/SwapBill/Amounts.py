@@ -2,9 +2,6 @@ from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
 
 def e(power):
 	return 10**power
-def ToSatoshis(value):
-	assert type(value) is float
-	return int(value * e(8))
 
 def _toString(i, decimalDigits):
 	s = str(i)

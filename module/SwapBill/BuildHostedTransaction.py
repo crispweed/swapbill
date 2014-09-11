@@ -1,6 +1,5 @@
 from __future__ import print_function
 from SwapBill import HostTransaction
-from SwapBill.ChooseInputs import ChooseInputs
 from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
 
 class InsufficientFunds(ExceptionReportedToUser):
@@ -23,18 +22,18 @@ def AddPaymentFeesAndChange(baseTX, baseInputAmount, dustLimit, transactionFee, 
 		filledOutTX.addInput(txID, vOut)
 
 	totalRequired = filledOutTX.sumOfOutputs() + transactionFee
-	if baseInputAmount + sum(unspentAmounts) < totalRequired:
-		raise InsufficientFunds('Not enough funds available for the transaction, total required:', totalRequired, 'transaction fee:', transactionFee, 'sum of unspent:', sum(unspentAmounts))
-
-	if baseInputAmount < totalRequired:
-		outputAssignments, outputsTotal = ChooseInputs(maxInputs=len(unspentAmounts), unspentAmounts=unspentAmounts, amountRequired=totalRequired - baseInputAmount)
-		for i in outputAssignments:
-			filledOutTX.addInput(unspentAsInputs[i][0], unspentAsInputs[i][1])
-	else:
-		outputsTotal = 0
-
-	if baseInputAmount + outputsTotal > totalRequired:
-		overSupply = baseInputAmount + outputsTotal - totalRequired
+	
+	inputsSum = baseInputAmount
+	i = 0
+	while inputsSum < totalRequired :
+		if i == len(unspentAsInputs):
+			raise InsufficientFunds('Not enough funds available for the transaction, total required:', totalRequired, 'transaction fee:', transactionFee, 'sum of unspent:', sum(unspentAmounts))			
+		filledOutTX.addInput(unspentAsInputs[i][0], unspentAsInputs[i][1])
+		inputsSum += unspentAmounts[i]
+		i += 1
+	
+	if inputsSum > totalRequired:
+		overSupply = inputsSum - totalRequired
 		if overSupply >= dustLimit:
 			filledOutTX.addOutput(changePubKeyHash, overSupply)
 

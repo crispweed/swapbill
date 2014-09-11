@@ -1,5 +1,5 @@
-import struct, binascii
-from SwapBill import HostTransaction
+import struct
+from SwapBill import HostTransaction, Util
 
 class NotSwapBillTransaction(Exception):
 	pass
@@ -30,26 +30,17 @@ def _encodeVarInt(i):
 	else:
 		return b'\xff' + struct.pack("<Q", i)
 
-def _decodeVarInt(data, startPos):
-	assert type(data) == type(b'')
-	if startPos >= len(data):
+def _decodeVarInt(data, pos):
+	if pos >= len(data):
 		raise _RanOutOfData()
-	firstByte = data[startPos:startPos + 1]
-	if firstByte == b'\xff':
-		if startPos + 9 > len(data):
-			raise _RanOutOfData()
-		return startPos + 9, struct.unpack("<Q", data[startPos + 1:startPos + 9])[0]
-	if firstByte == b'\xfe':
-		if startPos + 5 > len(data):
-			raise _RanOutOfData()
-		return startPos + 5, struct.unpack("<L", data[startPos + 1:startPos + 5])[0]
-	if firstByte == b'\xfd':
-		if startPos + 3 > len(data):
-			raise _RanOutOfData()
-		return startPos + 3, struct.unpack("<H", data[startPos + 1:startPos + 3])[0]
-	if startPos + 1 > len(data):
+	result = Util.intFromBytes(data[pos:pos + 1])
+	pos += 1
+	if result < 253:
+		return pos, result
+	byteSize = 2 ** (result - 252)
+	if pos + byteSize > len(data):
 		raise _RanOutOfData()
-	return startPos + 1, struct.unpack("<B", data[startPos:startPos + 1])[0]
+	return pos + byteSize, Util.intFromBytes(data[pos:pos + byteSize])
 
 def _opPush(i):
 	if i < 0x4c:
@@ -69,9 +60,9 @@ def ScriptPubKeyForPubKeyHash(pubKeyHash):
 	expectedScriptStart += _opPush(20)
 	expectedScriptEnd = OP_EQUALVERIFY
 	expectedScriptEnd += OP_CHECKSIG
-	return binascii.hexlify(expectedScriptStart + pubKeyHash + expectedScriptEnd).decode('ascii')
+	return Util.toHex(expectedScriptStart + pubKeyHash + expectedScriptEnd)
 def PubKeyHashForScriptPubKey(scriptPubKey):
-	scriptPubKeyBytes = binascii.unhexlify(scriptPubKey.encode('ascii'))
+	scriptPubKeyBytes = Util.fromHex(scriptPubKey)
 	expectedScriptStart = OP_DUP
 	expectedScriptStart += OP_HASH160
 	expectedScriptStart += _opPush(20)
@@ -90,11 +81,11 @@ def Create(tx, scriptPubKeyLookup):
 		txid = tx.inputTXID(i)
 		vout = tx.inputVOut(i)
 		scriptPubKey = scriptPubKeyLookup[(txid, vout)]
-		txIDBytes = binascii.unhexlify(txid.encode('ascii'))[::-1]
+		txIDBytes = Util.fromHex(txid)[::-1]
 		assert len(txIDBytes) == 32
 		data += txIDBytes
 		data += struct.pack("<L", vout)
-		script = binascii.unhexlify(scriptPubKey.encode('ascii'))
+		script = Util.fromHex(scriptPubKey)
 		data += _encodeVarInt(int(len(script)))
 		data += script
 		data += b'\xff' * 4 # sequence
@@ -170,7 +161,7 @@ def Decode(txBytes):
 	for i in range(numberOfInputs):
 		txIDBytes = txBytes[pos:pos + 32]
 		pos += 32
-		txID = binascii.hexlify(txIDBytes[::-1]).decode('ascii')
+		txID = Util.toHex(txIDBytes[::-1])
 		vOut = struct.unpack("<L", txBytes[pos:pos + 4])[0]
 		result.addInput(txID, vOut)
 		pos += 4
@@ -185,7 +176,7 @@ def Decode(txBytes):
 		pos, scriptLen = _decodeVarInt(txBytes, pos)
 		scriptPubKeyBytes = txBytes[pos:pos + scriptLen]
 		pos += scriptLen
-		scriptPubKeys.append(binascii.hexlify(scriptPubKeyBytes).decode('ascii')) # TODO keep this as binary data?
+		scriptPubKeys.append(Util.toHex(scriptPubKeyBytes)) # TODO keep this as binary data?
 		expectedScriptStart = OP_DUP
 		expectedScriptStart += OP_HASH160
 		expectedScriptStart += _opPush(20)
@@ -222,9 +213,3 @@ def GetTransactionsInBlock(data):
 		return result
 	except _RanOutOfData:
 		raise Exception('bad block data')
-
-def FromHex(hexStr):
-	return binascii.unhexlify(hexStr.encode('ascii'))
-def ToHex(data):
-	return binascii.hexlify(data).decode('ascii')
-

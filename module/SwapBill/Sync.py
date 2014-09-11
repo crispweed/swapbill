@@ -1,14 +1,15 @@
 from __future__ import print_function
-import sys
+import sys, binascii
 from os import path
 from collections import deque
-from SwapBill import State, RawTransaction, TransactionEncoding, PickledCache, OwnedAccounts, ControlAddressPrefix
+from SwapBill import State, RawTransaction, TransactionEncoding, PickledCache, OwnedAccounts, ControlAddressPrefix, KeyPair, SeedAccounts
+from SwapBill import ProtocolParameters
 from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
 
-stateVersion = 0.8
-ownedAccountsVersion = 0.2
+stateVersion = 4
+ownedAccountsVersion = 1
 
-def _processTransactions(state, wallet, ownedAccounts, transactions, applyToState, reportPrefix, out):
+def _processTransactions(state, wallet, ownedAccounts, secretsWatchList, secretsWallet, transactions, applyToState, reportPrefix, out):
 	for txID, hostTXBytes in transactions:
 		if RawTransaction.UnexpectedFormat_Fast(hostTXBytes, ControlAddressPrefix.prefix):
 			continue
@@ -22,6 +23,14 @@ def _processTransactions(state, wallet, ownedAccounts, transactions, applyToStat
 				print(reportPrefix + ': <invalid transaction>', file=out)
 				print(inputsReport, end="", file=out)
 			continue
+		if 'publicKeySecret' in transactionDetails:
+			secret = transactionDetails['publicKeySecret']
+			secretHash = KeyPair.PublicKeyToPubKeyHash(secret)
+			if secretHash in secretsWatchList:
+				if not secretsWallet.hasKeyPairForPubKeyHash(secretHash):
+					secretHashHex = binascii.hexlify(secretHash).decode('ascii')
+					print(reportPrefix + ': storing revealed secret with hash ' + secretHashHex, file=out)
+					secretsWallet.addPublicKeySecret(secret)
 		if inputsReport != '':
 			print(reportPrefix + ': ' + transactionType, file=out)
 			print(inputsReport, end="", file=out)
@@ -40,9 +49,9 @@ def _processTransactions(state, wallet, ownedAccounts, transactions, applyToStat
 		if (outputsReport or inputsReport) and error is not None:
 			print(' * failed:', error, file=out)
 
-def _processBlock(host, state, wallet, ownedAccounts, blockHash, reportPrefix, out):
+def _processBlock(host, state, wallet, ownedAccounts, secretsWatchList, secretsWallet, blockHash, reportPrefix, out):
 	transactions = host.getBlockTransactions(blockHash)
-	_processTransactions(state, wallet, ownedAccounts, transactions, True, reportPrefix, out)
+	_processTransactions(state, wallet, ownedAccounts, secretsWatchList, secretsWallet, transactions, True, reportPrefix, out)
 	#inBetweenReport = ownedAccounts.checkForTradeOfferChanges(state)
 	#assert inBetweenReport == ''
 	state.advanceToNextBlock()
@@ -50,32 +59,40 @@ def _processBlock(host, state, wallet, ownedAccounts, blockHash, reportPrefix, o
 	if tradeOffersChanged:
 		print('trade offer or pending exchange expired', file=out)
 
-def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, startBlockIndex, startBlockHash, wallet, host, includePending, forceRescan, out):
+def ForceRescan(cacheDirectory):
+	PickledCache.Remove(cacheDirectory, 'State')
+
+def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, protocol, wallet, host, secretsWatchList, secretsWallet, includePending, out):
+	params = ProtocolParameters.byHost[protocol]
+
 	loaded = False
-	if not forceRescan:
-		try:
-			(blockIndex, blockHash, state) = PickledCache.Load(cacheDirectory, 'State', stateVersion)
-			ownedAccounts = PickledCache.Load(cacheDirectory, 'OwnedAccounts', ownedAccountsVersion)
-			loaded = True
-		except PickledCache.LoadFailedException as e:
-			print('Failed to load from cache, full index generation required (' + str(e) + ')', file=out)
+	try:
+		(blockIndex, blockHash, state) = PickledCache.Load(cacheDirectory, 'State', stateVersion)
+		ownedAccounts = PickledCache.Load(cacheDirectory, 'OwnedAccounts', ownedAccountsVersion)
+		loaded = True
+	except PickledCache.LoadFailedException as e:
+		print('Failed to load from cache, full index generation required (' + str(e) + ')', file=out)
 	if loaded and host.getBlockHashAtIndexOrNone(blockIndex) != blockHash:
 		print('The block corresponding with cached state has been orphaned, full index generation required.', file=out)
 		loaded = False
-	if loaded and not state.startBlockMatches(startBlockHash):
+	if loaded and not state.parametersMatch(params):
 		print('Start config does not match config from loaded state, full index generation required.', file=out)
 		loaded = False
 	if loaded:
 		print('Loaded cached state data successfully', file=out)
 	else:
-		blockIndex = startBlockIndex
+		blockIndex = params['startBlock']
 		blockHash = host.getBlockHashAtIndexOrNone(blockIndex)
 		if blockHash is None:
-			raise ExceptionReportedToUser('Block chain has not reached the swapbill start block (' + str(startBlockIndex) + ').')
-		if blockHash != startBlockHash:
+			raise ExceptionReportedToUser('Block chain has not reached the swapbill start block (' + str(blockIndex) + ').')
+		if blockHash != params['startBlockHash']:
 			raise ExceptionReportedToUser('Block hash for swapbill start block does not match.')
-		state = State.State(blockIndex, blockHash)
 		ownedAccounts = OwnedAccounts.OwnedAccounts()
+		seedAccount,seedOutputAmount,seedPubKeyHash,seedAccountScriptPubKey,seedAmount = SeedAccounts.GetSeedAccountInfo(protocol)
+		if wallet.hasKeyPairForPubKeyHash(seedPubKeyHash):
+			seedAccountPrivateKey = wallet.privateKeyForPubKeyHash(seedPubKeyHash)
+			ownedAccounts.addSeedOutput(seedAccount, seedOutputAmount, seedAccountPrivateKey, seedAccountScriptPubKey)
+		state = State.State(params, seedAccount=seedAccount, seedAmount=seedAmount)
 
 	print('State update starting from block', blockIndex, file=out)
 
@@ -88,7 +105,7 @@ def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, startBlockIndex, startBlo
 		## hard coded value used here for number of blocks to lag behind with persistent state
 		if len(toProcess) == 20:
 			## advance cached state
-			_processBlock(host, state, wallet, ownedAccounts, blockHash, 'committed', out=out)
+			_processBlock(host, state, wallet, ownedAccounts, secretsWatchList, secretsWallet, blockHash, 'committed', out=out)
 			popped = toProcess.popleft()
 			blockIndex += 1
 			blockHash = popped
@@ -102,11 +119,11 @@ def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, startBlockIndex, startBlo
 
 	while len(toProcess) > 0:
 		## advance in memory state
-		_processBlock(host, state, wallet, ownedAccounts, blockHash, 'in memory', out=out)
+		_processBlock(host, state, wallet, ownedAccounts, secretsWatchList, secretsWallet, blockHash, 'in memory', out=out)
 		popped = toProcess.popleft()
 		blockIndex += 1
 		blockHash = popped
-	_processBlock(host, state, wallet, ownedAccounts, blockHash, 'in memory', out=out)
+	_processBlock(host, state, wallet, ownedAccounts, secretsWatchList, secretsWallet, blockHash, 'in memory', out=out)
 	blockIndex += 1
 
 	assert state._currentBlockIndex == blockIndex
@@ -120,7 +137,7 @@ def SyncAndReturnStateAndOwnedAccounts(cacheDirectory, startBlockIndex, startBlo
 	# but we can potentially be more careful about this by checking best block chain after getting memory pool transactions
 	# and restarting the block chain traversal if this does not match up
 	memPoolTransactions = host.getMemPoolTransactions()
-	_processTransactions(state, wallet, ownedAccounts, memPoolTransactions, includePending, 'in memory pool', out)
+	_processTransactions(state, wallet, ownedAccounts, secretsWatchList, secretsWallet, memPoolTransactions, includePending, 'in memory pool', out)
 
 	return state, ownedAccounts
 

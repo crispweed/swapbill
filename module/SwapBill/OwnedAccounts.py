@@ -47,3 +47,6 @@ class OwnedAccounts(object):
 			self.accounts[newOwnedAccount] = (hostTX.outputAmount(i + 1), privateKey, scriptPubKeys[i + 1])
 			report += ' - ' + Amounts.ToString(state._balances.balanceFor(newOwnedAccount)) + ' swapbill output added\n'
 		return report
+	
+	def addSeedOutput(self, account, amount, privateKey, scriptPubKey):
+		self.accounts[account] = (amount, privateKey, scriptPubKey)

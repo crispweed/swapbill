@@ -1,6 +1,6 @@
 from __future__ import print_function
 import struct, binascii
-from SwapBill import Address, HostTransaction, ControlAddressPrefix, Amounts
+from SwapBill import Address, HostTransaction, ControlAddressPrefix, Amounts, Util
 from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
 
 class UnsupportedTransaction(Exception):
@@ -12,47 +12,65 @@ class NotValidSwapBillTransaction(Exception):
 assert Amounts.percentBytes == 4
 
 _fundedMappingByTypeCode = (
-    ('Burn', ((0, 17), 'amount'), ('destination',), ()),
-    ('Pay', (('amount', 6, 'maxBlock', 4, None, 7), None), ('change','destination'), ()),
-    ('LTCBuyOffer',
-     (('swapBillOffered', 6, 'maxBlock', 4, 'exchangeRate', 4, None, 3), None),
-     ('ltcBuy',),
+    ('Burn',
+     'amount',
+     ('destination',), ()
+    ),
+    ('Pay',
+     ('amount', 6, 'maxBlock', 4),
+     ('change','destination'), ()
+    ),
+    ('BuyOffer',
+     ('swapBillOffered', 6, 'maxBlock', 4, 'exchangeRate', 4),
+     ('hostCoinBuy',),
      (('receivingAddress', None),)
 	),
-    ('LTCSellOffer',
-     (('ltcOffered', 6, 'maxBlock', 4, 'exchangeRate', 4, None, 3), None),
-     ('ltcSell',),
+    ('SellOffer',
+     ('hostCoinOffered', 6, 'maxBlock', 4, 'exchangeRate', 4),
+     ('hostCoinSell',),
      ()
 	),
     ('BackLTCSells',
-     (('backingAmount', 6, 'transactionsBacked', 3, 'maxBlock', 4, 'commission', 4), None),
-     ('ltcSellBacker',),
-     (('ltcReceiveAddress', None),)
+     ('backingAmount', 6, 'transactionsBacked', 3, 'maxBlock', 4, 'commission', 4),
+     ('hostCoinSellBacker',),
+     (('hostCoinReceiveAddress', None),)
 	),
-    ('BackedLTCSellOffer',
-     (('exchangeRate', 4, 'backerIndex', 6, None, 7), None),
+    ('BackedSellOffer',
+     ('exchangeRate', 4, 'backerIndex', 6),
      ('sellerReceive',),
-     (('backerLTCReceiveAddress', 'ltcOfferedPlusCommission'),)
+     (('backerHostCoinReceiveAddress', 'hostCoinOfferedPlusCommission'),)
 	),
-	)
-
-_forwardCompatibilityMapping = ('ForwardToFutureNetworkVersion', (('amount', 6, 'maxBlock', 4, None, 7), None), ('change',), ())
-
-_unfundedMappingByTypeCode = (
-    ('LTCExchangeCompletion',
-     (('pendingExchangeIndex', 6, None, 11), None),
-     (),
-     (('destinationAddress', 'destinationAmount'),)
+    ('PayOnRevealSecret',
+     ('amount', 6, 'maxBlock', 4),
+     ('change','destination'),
+     (('secretAddress', None),)
     ),
 	)
 
+_forwardCompatibilityMapping = ('ForwardToFutureNetworkVersion', ('amount', 6, 'maxBlock', 4), ('change',), ())
+
+_unfundedMappingByTypeCode = (
+    ('ExchangeCompletion',
+     ('pendingExchangeIndex', 6),
+     (),
+     (('destinationAddress', 'destinationAmount'),)
+    ),
+    ('RevealPendingPaymentSecret',
+     ('pendingPayIndex', 6, 'publicKeySecret:Bytes', 64),
+     (),
+     ()
+    ),
+	)
+
+_bytesSuffix = ':Bytes'
+
 def _mappingFromTypeString(transactionType):
-	for i in range(len(_fundedMappingByTypeCode)):
-		if transactionType == _fundedMappingByTypeCode[i][0]:
-			return i, _fundedMappingByTypeCode[i]
-	for i in range(len(_unfundedMappingByTypeCode)):
-		if transactionType == _unfundedMappingByTypeCode[i][0]:
-			return 128 + i, _unfundedMappingByTypeCode[i]
+	for i, entry in enumerate(_fundedMappingByTypeCode):
+		if transactionType == entry[0]:
+			return i, entry
+	for i, entry in enumerate(_unfundedMappingByTypeCode):
+		if transactionType == entry[0]:
+			return 128 + i, entry
 	raise Exception('Unknown transaction type string', transactionType)
 def _mappingFromTypeCode(typeCode):
 	if typeCode < len(_fundedMappingByTypeCode):
@@ -64,20 +82,9 @@ def _mappingFromTypeCode(typeCode):
 		return _unfundedMappingByTypeCode[typeCode]
 	raise UnsupportedTransaction()
 
-def _decodeInt(data):
-	multiplier = 1
-	result = 0
-	for i in range(len(data)):
-		byteValue = struct.unpack('<B', data[i:i + 1])[0]
-		result += byteValue * multiplier
-		multiplier = multiplier << 8
-	return result
-
 def _encodeInt(value, numberOfBytes):
 	if value < 0:
 		raise ExceptionReportedToUser('Negative values are not allowed for transaction parameters.')
-	#print('value:', value)
-	#print('numberOfBytes:', numberOfBytes)
 	result = b''
 	for i in range(numberOfBytes):
 		byteValue = value & 255
@@ -91,26 +98,35 @@ def ToStateTransaction(tx):
 	controlAddressData = tx.outputPubKeyHash(0)
 	assert controlAddressData.startswith(ControlAddressPrefix.prefix)
 	pos = len(ControlAddressPrefix.prefix)
-	typeCode = _decodeInt(controlAddressData[pos:pos+1])
+	typeCode = Util.intFromBytes(controlAddressData[pos:pos+1])
+	pos += 1
 	mapping = _mappingFromTypeCode(typeCode)
 	funded = (len(mapping[2]) > 0)
 	transactionType = mapping[0]
 	details = {}
-	controlAddressMapping, amountMapping = mapping[1]
-	pos += 1
-	for i in range(len(controlAddressMapping) // 2):
-		valueMapping = controlAddressMapping[i * 2]
-		numberOfBytes = controlAddressMapping[i * 2 + 1]
-		data = controlAddressData[pos:pos + numberOfBytes]
-		if valueMapping == 0:
-			if data != struct.pack('<B', 0) * numberOfBytes:
-				raise NotValidSwapBillTransaction
-		elif valueMapping is not None:
-			value = _decodeInt(data)
+	nextOutput = 1
+	if type(mapping[1]) is tuple:
+		controlAddressMapping = mapping[1]
+		for i in range(len(controlAddressMapping) // 2):
+			valueMapping = controlAddressMapping[i * 2]
+			numberOfBytes = controlAddressMapping[i * 2 + 1]
+			while pos + numberOfBytes > len(controlAddressData):
+				controlAddressData += tx.outputPubKeyHash(nextOutput)
+				nextOutput += 1
+			data = controlAddressData[pos:pos + numberOfBytes]
+			if valueMapping.endswith(_bytesSuffix):
+				valueMapping = valueMapping[:-len(_bytesSuffix)]
+				value = data
+			else:
+				value = Util.intFromBytes(data)
 			details[valueMapping] = value
-		pos += numberOfBytes
-	assert pos == 20
-	if amountMapping is not None:
+			pos += numberOfBytes
+		assert pos <= len(controlAddressData)
+	else:
+		data = controlAddressData[pos:20]
+		if data != struct.pack('<B', 0) * len(data):
+			raise NotValidSwapBillTransaction
+		amountMapping = mapping[1]
 		details[amountMapping] = tx.outputAmount(0)
 	sourceAccounts = None
 	if funded:
@@ -119,13 +135,13 @@ def ToStateTransaction(tx):
 			sourceAccounts.append((tx.inputTXID(i), tx.inputVOut(i)))
 	outputs = mapping[2]
 	destinations = mapping[3]
-	for i in range(len(destinations)):
-		addressMapping, amountMapping = destinations[i]
+	nextOutput += len(outputs)
+	for addressMapping, amountMapping in destinations:
 		assert addressMapping is not None
-		if addressMapping is not None:
-			details[addressMapping] = tx.outputPubKeyHash(1 + len(outputs) + i)
+		details[addressMapping] = tx.outputPubKeyHash(nextOutput)
 		if amountMapping is not None:
-			details[amountMapping] = tx.outputAmount(1 + len(outputs) + i)
+			details[amountMapping] = tx.outputAmount(nextOutput)
+		nextOutput += 1
 	return transactionType, sourceAccounts, outputs, details
 
 def _checkedAddOutputWithValue(tx, pubKeyHash, amount):
@@ -139,23 +155,35 @@ def FromStateTransaction(transactionType, sourceAccounts, outputs, outputPubKeyH
 	assert len(outputs) == len(outputPubKeyHashes)
 	typeCode, mapping = _mappingFromTypeString(transactionType)
 	tx = HostTransaction.InMemoryTransaction()
-	originalDetails = details
-	details = originalDetails.copy()
+	#originalDetails = details
+	#details = originalDetails.copy()
 	funded = (len(mapping[2]) > 0)
 	assert funded == (sourceAccounts is not None)
 	if sourceAccounts is not None:
 		for txID, vout in sourceAccounts:
 			tx.addInput(txID, vout)
-	details[None] = 0
-	details[0] = 0
-	controlAddressMapping, amountMapping = mapping[1]
-	controlAddressData = ControlAddressPrefix.prefix + _encodeInt(typeCode, 1)
-	for i in range(len(controlAddressMapping) // 2):
-		valueMapping = controlAddressMapping[i * 2]
-		numberOfBytes = controlAddressMapping[i * 2 + 1]
-		controlAddressData += _encodeInt(details[valueMapping], numberOfBytes)
-	assert len(controlAddressData) == 20
-	_checkedAddOutputWithValue(tx, controlAddressData, details[amountMapping])
+	controlData = ControlAddressPrefix.prefix + _encodeInt(typeCode, 1)
+	controlAmount = 0
+	if type(mapping[1]) is tuple:
+		controlAddressMapping = mapping[1]
+		for valueMapping, numberOfBytes in zip(controlAddressMapping[::2], controlAddressMapping[1::2]):
+			if valueMapping.endswith(_bytesSuffix):
+				valueMapping = valueMapping[:-len(_bytesSuffix)]
+				data = details[valueMapping]
+				assert len(data) == numberOfBytes
+				controlData += details[valueMapping]
+			else:
+				data = details[valueMapping]
+				controlData += _encodeInt(data, numberOfBytes)
+			while len(controlData) > 20:
+				_checkedAddOutputWithValue(tx, controlData[:20], 0)
+				controlData = controlData[20:]
+		assert len(controlData) <= 20
+		controlAmount = 0
+	else:
+		controlAmount = details[mapping[1]]
+	controlData += (20 - len(controlData)) * struct.pack('<B', 0)
+	_checkedAddOutputWithValue(tx, controlData, controlAmount)
 	expectedOutputs = mapping[2]
 	assert expectedOutputs == outputs
 	for pubKeyHash in outputPubKeyHashes:
@@ -163,5 +191,6 @@ def FromStateTransaction(transactionType, sourceAccounts, outputs, outputPubKeyH
 	destinations = mapping[3]
 	for addressMapping, amountMapping in destinations:
 		assert addressMapping is not None
-		_checkedAddOutputWithValue(tx, details[addressMapping], details[amountMapping])
+		amount = 0 if amountMapping is None else details[amountMapping]
+		_checkedAddOutputWithValue(tx, details[addressMapping], amount)
 	return tx

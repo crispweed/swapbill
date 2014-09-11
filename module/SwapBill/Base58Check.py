@@ -1,6 +1,6 @@
 from __future__ import print_function
-import binascii
-import hashlib
+from hashlib import sha256
+from SwapBill import Util
 
 class CharacterNotPermittedInEncodedData(Exception):
 	pass
@@ -10,12 +10,12 @@ class ChecksumDoesNotMatch(Exception):
 digits = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
 def CheckSum(data):
-	return hashlib.sha256(hashlib.sha256(data).digest()).digest()[:4]
+	return sha256(sha256(data).digest()).digest()[:4]
 
 def Encode(data):
 	assert type(data) is type(b'')
 	withChecksum = data + CheckSum(data)
-	n = int('0x0' + binascii.hexlify(withChecksum).decode('ascii'), 16)
+	n = int('0x0' + Util.toHex(withChecksum), 16)
 	base58 = ''
 	while n > 0:
 		n, r = divmod(n, 58)
@@ -36,7 +36,7 @@ def Decode(string):
 	h = '%x' % n
 	if len(h) % 2:
 		h = '0' + h
-	base58 = binascii.unhexlify(h.encode('ascii'))
+	base58 = Util.fromHex(h)
 	pad = 0
 	for c in string[:-1]:
 		if c == digits[0]: pad += 1

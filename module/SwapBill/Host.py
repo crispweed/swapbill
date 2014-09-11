@@ -1,7 +1,9 @@
 from __future__ import print_function
-import os
+import os, sys
+if sys.version > '3':
+	long = int
 from os import path
-from SwapBill import RawTransaction, Address, Amounts, RPC
+from SwapBill import RawTransaction, Address, Amounts, RPC, Util
 from SwapBill.ExceptionReportedToUser import ExceptionReportedToUser
 
 class SigningFailed(ExceptionReportedToUser):
@@ -16,21 +18,20 @@ class Host(object):
 		self._privateKeyAddressVersion = privateKeyAddressVersion
 		self._cachedBlockHash = None
 		self._cachedBlockDataHash = None
-		#blockHashForBlockZero = self._rpcHost.call('getblockhash', 0)
-		#self._hasExtendTransactionsInBlockQuery = True
-		#try:
-			#transactionsInBlockZero = self._rpcHost.call('getrawtransactionsinblock', blockHashForBlockZero)
-		##except RPC.MethodNotFoundException:
-		#except RPC.RPCFailureException: # ** we get a different RPC error for this on Windows
-			#self._hasExtendTransactionsInBlockQuery = False
 		self._submittedTransactionsFileName = submittedTransactionsLogFileName
+
+	def getAddressVersion(self):
+		return self._addressVersion
 
 # unspents, addresses, transaction encode and send
 
 	def getUnspent(self):
-		## lowest level getUnspent interface
+		# lowest level getUnspent interface
 		result = []
 		allUnspent = self._rpcHost.call('listunspent')
+		def negativeConfirmations(entry):
+			return -entry['confirmations']
+		allUnspent.sort(key = negativeConfirmations)
 		for output in allUnspent:
 			if not 'address' in output: ## is this check required?
 				continue
@@ -38,19 +39,19 @@ class Host(object):
 			for key in ('txid', 'vout', 'scriptPubKey'):
 				filtered[key] = output[key]
 			filtered['address'] = Address.ToPubKeyHash(self._addressVersion, output['address'])
-			filtered['amount'] = Amounts.ToSatoshis(output['amount'])
+			amount_FloatFromJSON = output['amount']
+			amount_TenthsOfSatoshis = long(amount_FloatFromJSON * 1e9)
+			# round to nearest, after conversion to integer
+			amount_Satoshis = (amount_TenthsOfSatoshis + 5) // 10
+			filtered['amount'] = amount_Satoshis
 			result.append(filtered)
 		return result
 
-	def getNewNonSwapBillAddress(self):
+	def getManagedAddress(self):
 		return Address.ToPubKeyHash(self._addressVersion, self._rpcHost.call('getnewaddress'))
 
 	def signAndSend(self, unsignedTransactionHex, privateKeys, maximumSignedSize):
-		#print('\t\tunsignedTransactionHex =', unsignedTransactionHex.__repr__())
-		#print('\t\tprivateKeys =', privateKeys.__repr__())
-		#print('\t\tmaximumSignedSize =', maximumSignedSize.__repr__())
-		#return None
-		## lowest level transaction send interface
+		# lowest level transaction send interface
 		signingResult = self._rpcHost.call('signrawtransaction', unsignedTransactionHex)
 		if signingResult['complete'] != True:
 			privateKeys_WIF = []
@@ -58,6 +59,8 @@ class Host(object):
 				privateKeys_WIF.append(Address.PrivateKeyToWIF(privateKey, self._privateKeyAddressVersion))
 			signingResult = self._rpcHost.call('signrawtransaction', signingResult['hex'], None, privateKeys_WIF)
 		if signingResult['complete'] != True:
+			#print(unsignedTransactionHex)
+			#print(privateKeys)
 			raise SigningFailed("RPC call to signrawtransaction did not set 'complete' to True")
 		signedHex = signingResult['hex']
 		byteSize = len(signedHex) / 2
@@ -93,7 +96,7 @@ class Host(object):
 		return self._cachedBlock
 	def _getBlockData_Cached(self, blockHash):
 		if self._cachedBlockDataHash != blockHash:
-			self._cachedBlockData = RawTransaction.FromHex(self._rpcHost.call('getblock', blockHash, False))
+			self._cachedBlockData = Util.fromHex(self._rpcHost.call('getblock', blockHash, False))
 			self._cachedBlockDataHash = blockHash
 		return self._cachedBlockData
 
@@ -101,31 +104,23 @@ class Host(object):
 		block = self._getBlock_Cached(blockHash)
 		return block.get('nextblockhash', None)
 	def getBlockTransactions(self, blockHash):
-		result = []
 		block = self._getBlock_Cached(blockHash)
 		transactionIDs = block['tx']
 		blockData = self._getBlockData_Cached(blockHash)
 		rawTransactions = RawTransaction.GetTransactionsInBlock(blockData)
 		assert len(rawTransactions) == len(transactionIDs)
 		assert len(transactionIDs) >= 1
-		for i in range(len(rawTransactions) - 1):
-			result.append((transactionIDs[i + 1], rawTransactions[i + 1]))
-		return result
+		return list(zip(transactionIDs, rawTransactions))[1:]
 
 	def getMemPoolTransactions(self):
 		mempool = self._rpcHost.call('getrawmempool')
 		result = []
 		for txHash in mempool:
 			txHex = self._rpcHost.call('getrawtransaction', txHash)
-			result.append((txHash, RawTransaction.FromHex(txHex)))
+			result.append((txHash, Util.fromHex(txHex)))
 		return result
 
 # convenience
-
-	def formatAddressForEndUser(self,  pubKeyHash):
-		return Address.FromPubKeyHash(self._addressVersion, pubKeyHash)
-	def addressFromEndUserFormat(self,  address):
-		return Address.ToPubKeyHash(self._addressVersion, address)
 
 	def formatAccountForEndUser(self, account):
 		txID, vOut = account

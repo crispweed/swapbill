@@ -1,5 +1,5 @@
 from __future__ import print_function
-import sys
+import sys, os
 PY3 = sys.version_info.major > 2
 if PY3:
 	import pickle
@@ -36,3 +36,7 @@ def Save(data, dataVersion, cacheDirectory, cacheName):
 	except:
 		print("Error, failed to write cache:", sys.exc_info()[0])
 
+def Remove(cacheDirectory, cacheName):
+	assert path.isdir(cacheDirectory)
+	cacheFile = path.join(cacheDirectory, cacheName + cacheSuffix)
+	os.remove(cacheFile)
