@@ -2,6 +2,8 @@
 SwapBill documentation root
 ====================================
 
+https://github.com/crispweed/swapbill
+
 Explanation:
 
 .. toctree::
