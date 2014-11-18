@@ -116,8 +116,14 @@ class Host(object):
 		mempool = self._rpcHost.call('getrawmempool')
 		result = []
 		for txHash in mempool:
-			txHex = self._rpcHost.call('getrawtransaction', txHash)
-			result.append((txHash, Util.fromHex(txHex)))
+			try:
+				txHex = self._rpcHost.call('getrawtransaction', txHash)
+				result.append((txHash, Util.fromHex(txHex)))
+			except RPC.RPCFailureException:
+				# transactions can potentially get moved out of the memory pool
+				# in between the call to getrawmempool and the call to getrawtransaction
+				# if so, we can get an error back for the getrawtransaction RPC call
+				pass
 		return result
 
 # convenience
